@@ -23,7 +23,7 @@ jobs:
       # Actions are pinned to commit SHAs, not tags: this job holds
       # id-token: write for the pypi environment, so a retagged action would
       # be able to publish arbitrary trustmux releases.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set version from tag
         if: github.event_name == 'push'
