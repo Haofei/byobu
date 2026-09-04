@@ -275,6 +275,32 @@ byobu (7.19) 2026-08-15  Dustin Kirkland <kirkland@ubuntu.com>
     and uses permessage-deflate when the client offers it (Tornado
     silently declines the extension otherwise, regardless of what the
     client asks for)
+  * trustmux/pwa: grade the top-bar connection checkmark by measured
+    round-trip latency instead of just WebSocket readyState. It used to
+    show a solid green check throughout a connection that was, in
+    practice, unusable -- the browser's WebSocket object reports OPEN
+    even when the underlying link is badly degraded or fully dead (TCP
+    doesn't always notice a vanished path quickly), so "green" carried
+    no actual information about whether anything was getting through.
+    Now pings the daemon every 5 seconds and grades the indicator: green
+    under 2s round-trip, amber ("degraded") from 2s up to 15s, and the
+    existing red/black "error" look from 15s with no response onward --
+    the same bucket used for an outright disconnect, since a socket
+    that's technically open but not answering in 15+ seconds isn't
+    meaningfully different from the user's perspective. The amber/red
+    escalation also kicks in *while* a slow ping is still outstanding
+    rather than only once it finally resolves, so a stalling link is
+    reflected live instead of showing a stale color for up to 15
+    seconds. Shares its single in-flight ping with the existing
+    on-demand latency popup (the daemon's pong carries no correlation
+    id, so two concurrent pings would be indistinguishable) -- fixed a
+    latent falsy-zero bug caught by the new test harness along the way,
+    where the "no ping in flight" sentinel was 0, which collides with a
+    ping legitimately sent at performance.now() === 0. Verified with a
+    standalone Node harness against a fake clock (fast pong grades
+    green, slow pong grades amber, no response for 15s+ grades into the
+    error bucket even with the socket still open, a concurrent caller
+    never triggers a duplicate ping, disconnecting stops the monitor)
 
 byobu (7.18) 2026-08-14  Dustin Kirkland <kirkland@ubuntu.com>
 

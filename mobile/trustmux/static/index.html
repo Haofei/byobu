@@ -236,8 +236,15 @@
 
     /* ── connection indicator ── shape + color + motion, never color alone:
        connecting = spinning amber ring (motion carries the meaning);
-       connected  = solid green circle, white check;
-       error      = solid black circle, red X. */
+       connected  = solid green circle, white check -- round-trip pinged
+                    every few seconds and only shown while that stays under
+                    HEALTH_GREEN_MS, not just while the socket is open;
+       degraded   = solid amber circle, black "!" -- still connected, but
+                    the last ping (or one still outstanding) is slow;
+       error      = solid black circle, red X -- disconnected, or no ping
+                    response at all for HEALTH_STALLED_MS (an open socket
+                    that isn't actually getting anywhere is no different
+                    from the user's perspective). */
     #conn-indicator {
       width: 15px; height: 15px; border-radius: 50%; flex-shrink: 0;
       margin-left: auto;
@@ -252,6 +259,8 @@
     }
     #conn-indicator.connected { background: var(--green); color: #fff; }
     #conn-indicator.connected::before { content: "\2713\FE0E"; }
+    #conn-indicator.degraded { background: var(--amber); color: #000; }
+    #conn-indicator.degraded::before { content: "!"; font-weight: bold; }
     #conn-indicator.error { background: #000; color: var(--red); }
     #conn-indicator.error::before { content: "\2717\FE0E"; }
     @keyframes conn-spin { to { transform: rotate(360deg); } }

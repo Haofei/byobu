@@ -370,11 +370,13 @@ function connect() {
     setStatus('connected', 'connected');
     _connectedAt = Date.now();
     startClock();
+    startHealthMonitor();
     send({ type: 'list_sessions' });
     if (currentPane) _sendSubscribeNow(currentPane);
   };
   ws.onclose = (evt) => {
     stopClock();
+    stopHealthMonitor();
     // In-flight tracking is scoped to one connection -- a subscribe sent
     // on the old socket will never get a reply on the new one, so start
     // clean rather than carrying a stale "in flight" flag (or a stale
@@ -403,7 +405,10 @@ function connect() {
     if (msg.server_tz) _serverTz = msg.server_tz;
     if (msg.server_ip) _serverIp = msg.server_ip;
     if (msg.type === 'pong') {
-      if (_pendingPing) { _pendingPing(); _pendingPing = null; }
+      const rtt = _pingSentAt !== null ? Math.round(performance.now() - _pingSentAt) : null;
+      _pingSentAt = null;
+      const waiters = _pendingPings; _pendingPings = [];
+      waiters.forEach(fn => fn(rtt));
     } else if (msg.type === 'send_keys_ack') {
       if (_pendingSend && msg.req_id === _pendingSend.reqId) _clearPendingSend();
     } else if (msg.type === 'sessions') {
@@ -1531,10 +1536,35 @@ let _serverOffset = 0;  // ms: server clock minus browser clock
 let _serverTz = 'UTC';  // IANA timezone of the host machine
 let _serverIp = '';     // machine's IP, for the connection-info popup
 let _connectedAt = 0;   // Date.now() when the current ws connection opened
-let _pendingPing = null; // resolver for an in-flight latency ping, or null
 
 // Round-trip latency via a dedicated ping/pong (not list_sessions — that
 // queries tmux, adding noise to a number meant to reflect network time).
+// Only one ping is ever in flight: the daemon's pong carries no correlation
+// id, so a second concurrent ping would be indistinguishable from the
+// first's reply. The on-demand popup measurement and the periodic
+// connection-health monitor below share this one slot — a caller that
+// arrives while a ping is already outstanding doesn't send a duplicate, it
+// just also gets notified when that same pong comes back.
+let _pendingPings = [];  // resolvers waiting on the next pong
+let _pingSentAt = null;  // performance.now() the in-flight ping was sent, null = none in flight
+
+function _requestPing(timeoutMs) {
+  return new Promise(resolve => {
+    let settled = false;
+    const done = rtt => { if (!settled) { settled = true; resolve(rtt); } };
+    _pendingPings.push(done);
+    if (_pendingPings.length === 1) {
+      _pingSentAt = performance.now();
+      send({ type: 'ping' });
+    }
+    setTimeout(() => {
+      const idx = _pendingPings.indexOf(done);
+      if (idx !== -1) _pendingPings.splice(idx, 1);
+      done(null);
+    }, timeoutMs);
+  });
+}
+
 // Resolves to null if no pong arrives within LATENCY_TIMEOUT_MS. Well past
 // the connection's own stall threshold: a real link (e.g. plane wifi, or a
 // connection still working through a backed-up send queue) can be connected
@@ -1542,15 +1572,60 @@ let _pendingPing = null; // resolver for an in-flight latency ping, or null
 // number instead of "timed out".
 const LATENCY_TIMEOUT_MS = 60000;
 function measureLatency() {
-  return new Promise(resolve => {
-    if (_pendingPing) { resolve(null); return; }
-    const start = performance.now();
-    _pendingPing = () => resolve(Math.round(performance.now() - start));
-    send({ type: 'ping' });
-    setTimeout(() => {
-      if (_pendingPing) { _pendingPing = null; resolve(null); }
-    }, LATENCY_TIMEOUT_MS);
-  });
+  return _requestPing(LATENCY_TIMEOUT_MS);
+}
+
+// ── connection-health indicator (top-bar checkmark) ─────────────────────────
+// The checkmark used to mean only "the browser's WebSocket object reports
+// OPEN" -- true even when the underlying link is so degraded that nothing
+// gets through in any reasonable time, or even fully dead (TCP doesn't
+// always notice a vanished path quickly). Reported: a solid green check
+// shown throughout a connection that was, in practice, unusable. Ping on a
+// steady cadence and grade the checkmark by real round-trip time instead of
+// socket state alone -- green means "verified fast, recently", not just
+// "technically still connected".
+const HEALTH_PING_INTERVAL_MS = 5000;
+const HEALTH_GREEN_MS   = 2000;  // under this: green
+const HEALTH_STALLED_MS = 15000; // no response by this long: treat like disconnected
+let _healthPingTimer = null;
+let _healthTickTimer = null;
+
+function _gradeHealth(rttOrNull) {
+  if (rttOrNull === null || rttOrNull >= HEALTH_STALLED_MS) {
+    setStatus(rttOrNull === null ? 'no response — connection may be lost'
+                                  : `no response for ${Math.round(rttOrNull / 1000)}s`, 'error');
+  } else if (rttOrNull >= HEALTH_GREEN_MS) {
+    setStatus(`slow connection (${rttOrNull}ms)`, 'degraded');
+  } else {
+    setStatus(`connected (${rttOrNull}ms)`, 'connected');
+  }
+}
+
+async function _healthPing() {
+  const rtt = await _requestPing(HEALTH_STALLED_MS + 2000);
+  if (!ws || ws.readyState !== WebSocket.OPEN) return; // onclose owns the indicator now
+  _gradeHealth(rtt);
+}
+
+function _healthTick() {
+  // Escalate the indicator *while* a slow ping is still outstanding rather
+  // than only once it finally resolves -- otherwise a stalling link keeps
+  // showing the last-known-good color for up to HEALTH_STALLED_MS.
+  if (_pingSentAt === null) return;
+  const elapsed = performance.now() - _pingSentAt;
+  if (elapsed >= HEALTH_GREEN_MS) _gradeHealth(elapsed);
+}
+
+function startHealthMonitor() {
+  stopHealthMonitor();
+  _healthPing();
+  _healthPingTimer = setInterval(_healthPing, HEALTH_PING_INTERVAL_MS);
+  _healthTickTimer = setInterval(_healthTick, 1000);
+}
+function stopHealthMonitor() {
+  if (_healthPingTimer) { clearInterval(_healthPingTimer); _healthPingTimer = null; }
+  if (_healthTickTimer) { clearInterval(_healthTickTimer); _healthTickTimer = null; }
+  _pingSentAt = null;
 }
 
 function startClock() {
@@ -1774,7 +1849,11 @@ async function showInfoPopup() {
   infoPopup.style.top   = (rect.bottom + 8) + 'px';
   infoPopup.style.right = (window.innerWidth - rect.right) + 'px';
 
-  const connected = connIndicator.classList.contains('connected');
+  // Not connIndicator.classList.contains('connected') -- the indicator now
+  // also has a 'degraded' class for a slow-but-open connection, which is
+  // still connected for this popup's purposes (it should measure and show
+  // the real latency, not claim there's nothing to measure).
+  const connected = !!ws && ws.readyState === WebSocket.OPEN;
   const method    = isTailscaleHost() ? 'Tailscale' : 'Direct';
   const ip        = _serverIp || '—';
   const since     = connected && _connectedAt
