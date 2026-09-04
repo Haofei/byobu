@@ -219,6 +219,33 @@ byobu (7.19) 2026-08-15  Dustin Kirkland <kirkland@ubuntu.com>
     byobu-disable-shell-integration removes it along with everything
     else -- one on/off switch for both, since there's no separate
     opt-in yet
+  * trustmux/pwa: stop silently losing typed input on a slow or flaky
+    connection. `sendKeys()` cleared the input box the instant
+    `ws.send()` returned, but that call succeeding says nothing about
+    whether the daemon ever received or processed the message -- on a
+    high-latency link (reported from an airplane wifi connection) a
+    long prompt could sit unconfirmed for seconds to minutes, or get
+    dropped outright, with no way to tell which and no way to recover
+    it short of retyping. Added an opaque `req_id` to `send_keys`,
+    echoed back by the daemon in a new `send_keys_ack` message on
+    success and in the existing error replies on failure (including the
+    outer exception handler, not just pane_id validation, since a
+    mid-processing failure is exactly when a correlatable reply matters
+    most); every other send_keys call site (key bar taps, Esc/Ctrl-C)
+    omits req_id and continues to get no reply at all, unchanged. The
+    PWA now tracks the single most recent pending send and shows a
+    "Restore & resend" banner if it isn't acked within 12 seconds or the
+    connection drops before then; restoring only ever fills an empty
+    input box, never clobbering something typed since. Recovery is
+    always a manual tap, never automatic -- silently replaying a send
+    whose fate is genuinely unknown risks double-executing a command
+    that actually landed the first time. Verified with 4 new real
+    WebSocket integration tests against the daemon (ack on success,
+    silence when req_id is omitted, req_id echoed on both error paths)
+    and a standalone Node harness exercising the client-side state
+    machine (ack clears pending, error restores into an empty box but
+    not over new text, disconnect shows the banner immediately, a stale
+    reply for an already-superseded send is ignored)
 
 byobu (7.18) 2026-08-14  Dustin Kirkland <kirkland@ubuntu.com>
 

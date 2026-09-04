@@ -1085,6 +1085,77 @@ class TestWsHandler(AsyncHTTPTestCase):
         conn.close()
 
     @gen_test(timeout=5)
+    async def test_send_keys_with_req_id_acks_on_success(self):
+        # The PWA correlates this with a pending, optimistically-cleared
+        # input box -- without it, a client on a slow/flaky link has no way
+        # to tell "processed" apart from "still in flight" or "lost".
+        tok = _add_session('ws_tok_sk_ack')
+        with patch.object(bm, 'tmux_list_sessions', return_value=[]), \
+             patch.object(bm, 'tmux_send_keys'):
+            conn = await websocket_connect(self._ws_req(token=tok))
+            await conn.read_message()
+            await conn.write_message(json.dumps(
+                {'type': 'send_keys', 'pane_id': '%1', 'keys': 'ls', 'req_id': 'abc123'}))
+            resp = await conn.read_message()
+        data = json.loads(resp)
+        self.assertEqual(data['type'], 'send_keys_ack')
+        self.assertEqual(data['req_id'], 'abc123')
+        conn.close()
+
+    @gen_test(timeout=5)
+    async def test_send_keys_without_req_id_gets_no_ack(self):
+        # Every other send_keys call site (key bar taps, Esc/Ctrl-C) doesn't
+        # pass req_id and must not start getting an extra reply per
+        # keystroke just because the ack mechanism now exists. Proven
+        # directly (nothing arrives within a bounded wait) rather than by
+        # racing against a second request's reply -- two independently
+        # scheduled async tasks have no guaranteed completion order, so
+        # that would only coincidentally catch a regression, not reliably.
+        tok = _add_session('ws_tok_sk_noack')
+        with patch.object(bm, 'tmux_list_sessions', return_value=[]), \
+             patch.object(bm, 'tmux_send_keys'):
+            conn = await websocket_connect(self._ws_req(token=tok))
+            await conn.read_message()
+            await conn.write_message(json.dumps(
+                {'type': 'send_keys', 'pane_id': '%1', 'keys': 'ls'}))
+            with self.assertRaises(asyncio.TimeoutError):
+                await asyncio.wait_for(conn.read_message(), timeout=0.5)
+        conn.close()
+
+    @gen_test(timeout=5)
+    async def test_send_keys_invalid_pane_id_with_req_id_echoes_it(self):
+        tok = _add_session('ws_tok_sk_err_req')
+        with patch.object(bm, 'tmux_list_sessions', return_value=[]):
+            conn = await websocket_connect(self._ws_req(token=tok))
+            await conn.read_message()
+            await conn.write_message(json.dumps(
+                {'type': 'send_keys', 'pane_id': 'bad', 'keys': 'ls', 'req_id': 'xyz'}))
+            resp = await conn.read_message()
+        data = json.loads(resp)
+        self.assertEqual(data['type'], 'error')
+        self.assertEqual(data['req_id'], 'xyz')
+        conn.close()
+
+    @gen_test(timeout=5)
+    async def test_send_keys_unexpected_failure_with_req_id_echoes_it(self):
+        # The generic except-Exception handler wrapping every message type
+        # must also correlate, not just the pane_id-validation error --an
+        # unexpected failure partway through is exactly when knowing which
+        # pending send it was matters most.
+        tok = _add_session('ws_tok_sk_crash')
+        with patch.object(bm, 'tmux_list_sessions', return_value=[]), \
+             patch.object(bm, 'tmux_send_keys', side_effect=RuntimeError('boom')):
+            conn = await websocket_connect(self._ws_req(token=tok))
+            await conn.read_message()
+            await conn.write_message(json.dumps(
+                {'type': 'send_keys', 'pane_id': '%1', 'keys': 'ls', 'req_id': 'crash-1'}))
+            resp = await conn.read_message()
+        data = json.loads(resp)
+        self.assertEqual(data['type'], 'error')
+        self.assertEqual(data['req_id'], 'crash-1')
+        conn.close()
+
+    @gen_test(timeout=5)
     async def test_new_session_empty_name_returns_error(self):
         tok = _add_session('ws_tok_ns')
         with patch.object(bm, 'tmux_list_sessions', return_value=[]):

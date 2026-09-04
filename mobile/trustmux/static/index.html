@@ -456,6 +456,23 @@
     body.keybar-on #inputbar { border-top: 1px solid var(--accent); }
     body.keybar-on #btn-send:not(:disabled) { opacity: 0.45; }
 
+    /* ── pending-send recovery banner: shown when a send_keys hasn't been
+       acked by the daemon yet (slow/dropped connection) ── */
+    #pending-send-banner {
+      display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+      background: var(--amber); color: var(--bg);
+      border-top: 1px solid var(--border); flex-shrink: 0;
+      font-size: 13px;
+    }
+    #pending-send-banner span { flex: 1; }
+    #pending-send-restore {
+      background: var(--bg); color: var(--text);
+      border: 1px solid var(--border); border-radius: 4px;
+      padding: 6px 10px; font-size: 13px; font-family: var(--font);
+      cursor: pointer; flex-shrink: 0;
+    }
+    #pending-send-restore:active { background: var(--bg3); }
+
 
     /* ── pairing overlay ── */
     #pair-overlay {
@@ -777,6 +794,13 @@
     <button data-key="BSpace" title="Backspace">⌫</button>
     <button data-key="Enter" title="Enter">⏎</button>
     <button id="keybar-close" title="Close key bar: back to chunked input">✕</button>
+  </div>
+
+  <!-- ── pending-send recovery (shown when a send_keys hasn't been confirmed
+       by the daemon yet -- see _requestSendKeys in app.js) ── -->
+  <div id="pending-send-banner" style="display:none">
+    <span>Not confirmed yet — may not have reached the daemon.</span>
+    <button id="pending-send-restore">Restore &amp; resend</button>
   </div>
 
   <div id="inputbar">

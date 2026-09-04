@@ -223,6 +223,8 @@ const connIndicator = document.getElementById('conn-indicator');
 const cmdInput      = document.getElementById('cmd');
 const pwdInput      = document.getElementById('pwd');
 const btnSend       = document.getElementById('btn-send');
+const pendingSendBanner  = document.getElementById('pending-send-banner');
+const pendingSendRestore = document.getElementById('pending-send-restore');
 const btnKbdMode    = document.getElementById('btn-kbd-mode');
 const machineSelect    = document.getElementById('machine-select');
 const btnInstall       = document.getElementById('btn-install');
@@ -380,6 +382,10 @@ function connect() {
     _subscribeInFlight = false;
     _subscribeDeferredPaneId = null;
     clearTimeout(_subscribeSafetyTimer);
+    // A dropped connection is already maximally uncertain for anything
+    // still in flight -- surface the recovery banner now rather than
+    // waiting out the rest of _PENDING_SEND_TIMEOUT_MS.
+    if (_pendingSend) _showPendingSendBanner();
     if (evt.code === 4401) {
       showPairScreen();
       return;
@@ -398,6 +404,8 @@ function connect() {
     if (msg.server_ip) _serverIp = msg.server_ip;
     if (msg.type === 'pong') {
       if (_pendingPing) { _pendingPing(); _pendingPing = null; }
+    } else if (msg.type === 'send_keys_ack') {
+      if (_pendingSend && msg.req_id === _pendingSend.reqId) _clearPendingSend();
     } else if (msg.type === 'sessions') {
       sessions = msg.data || [];
       if (msg.new_session) forcedSessionId = msg.new_session;
@@ -447,6 +455,9 @@ function connect() {
       const atBottom = output.scrollHeight - output.scrollTop <= output.clientHeight + 60;
       renderOutput(_currentPaneRawLines.join('\n'), atBottom);
     } else if (msg.type === 'error') {
+      // A definitive failure -- restore immediately rather than waiting out
+      // _PENDING_SEND_TIMEOUT_MS, since there's nothing left to wait for.
+      if (_pendingSend && msg.req_id === _pendingSend.reqId) _restorePendingSend();
       setStatus(`error: ${msg.message}`, 'error');
     }
   };
@@ -814,11 +825,58 @@ function renderOutput(text, scrollToBottom) {
 // ── send keys ─────────────────────────────────────────────────────────────
 function activeInput() { return kbdMode === 2 ? pwdInput : cmdInput; }
 
+// Pending-send tracking: a send_keys transmitted but not yet confirmed (or
+// denied) by the daemon. Only the single most recent send is tracked here --
+// this is recovery for the reported case (one long prompt typed and
+// submitted on a slow/flaky link, no confirmation for seconds to minutes,
+// sometimes silently dropped), not a general offline queue. Recovery is
+// always a manual, explicit tap on the restore button, never automatic: on
+// a link this uncertain there's no way to tell "lost" apart from "still in
+// flight," and silently replaying could double-execute a command that
+// actually did land the first time.
+let _pendingSend = null; // { reqId, text, inp } or null
+let _pendingSendId = 0;
+let _pendingSendTimer = null;
+const _PENDING_SEND_TIMEOUT_MS = 12000;
+
+function _clearPendingSend() {
+  _pendingSend = null;
+  clearTimeout(_pendingSendTimer);
+  _pendingSendTimer = null;
+  pendingSendBanner.style.display = 'none';
+}
+
+function _showPendingSendBanner() {
+  if (!_pendingSend) return;
+  pendingSendBanner.style.display = 'flex';
+}
+
+function _restorePendingSend() {
+  if (!_pendingSend) return;
+  const { text, inp } = _pendingSend;
+  // Only restore into an empty box -- don't clobber anything the user has
+  // typed since.
+  if (!inp.value) {
+    inp.value = text;
+    if (inp === cmdInput) {
+      cmdInput.style.height = 'auto';
+      cmdInput.style.height = Math.min(cmdInput.scrollHeight, 160) + 'px';
+    }
+    inp.focus();
+  }
+  _clearPendingSend();
+}
+pendingSendRestore.addEventListener('click', _restorePendingSend);
+
 function sendKeys() {
   const inp  = activeInput();
   const keys = inp.value;
   if (!keys || !currentPane) return;
-  send({ type: 'send_keys', pane_id: currentPane, keys, enter: true });
+  const reqId = `s${++_pendingSendId}`;
+  _pendingSend = { reqId, text: keys, inp };
+  clearTimeout(_pendingSendTimer);
+  _pendingSendTimer = setTimeout(_showPendingSendBanner, _PENDING_SEND_TIMEOUT_MS);
+  send({ type: 'send_keys', pane_id: currentPane, keys, enter: true, req_id: reqId });
   inp.value = '';
   if (inp === cmdInput) {
     cmdInput.style.height = 'auto';

@@ -1192,15 +1192,32 @@ class WsHandler(tornado.websocket.WebSocketHandler):
                     self._send({"type": "sessions", "data": sessions_list})
 
             elif mtype == "send_keys":
+                # req_id is an opaque client-chosen token, only ever echoed
+                # back verbatim -- it exists so the PWA can correlate an ack
+                # (or this error) with the specific send that triggered it,
+                # e.g. to know a long typed prompt actually reached the
+                # daemon before clearing it from the input box, particularly
+                # over a high-latency/flaky link where "no reply yet" and
+                # "never arrived" are otherwise indistinguishable. Only sent
+                # back at all if the caller included one -- every other
+                # send_keys call site (key bar taps, Esc/Ctrl-C) doesn't
+                # want an ack for every keystroke.
+                req_id = msg.get("req_id")
+                req_id = str(req_id)[:64] if req_id is not None else None
                 pane_id = msg.get("pane_id", "")
                 if not _valid_tmux_id(pane_id):
-                    self._send({"type": "error", "message": "invalid pane_id"})
+                    err = {"type": "error", "message": "invalid pane_id"}
+                    if req_id is not None:
+                        err["req_id"] = req_id
+                    self._send(err)
                 else:
                     keys = str(msg.get("keys", ""))[:4096]
                     enter   = bool(msg.get("enter", True))
                     literal = bool(msg.get("literal", True))
                     await asyncio.to_thread(tmux_send_keys, pane_id, keys, enter, literal)
                     del keys  # release sensitive content as early as possible
+                    if req_id is not None:
+                        self._send({"type": "send_keys_ack", "req_id": req_id})
 
             elif mtype == "rename_window":
                 wid = msg.get("window_id", "")
@@ -1229,7 +1246,16 @@ class WsHandler(tornado.websocket.WebSocketHandler):
                         self._send({"type": "sessions", "data": sessions_list})
 
         except Exception:
-            self._send({"type": "error", "message": "command failed"})
+            err = {"type": "error", "message": "command failed"}
+            # Echo req_id here too (not just the pane_id-validation error
+            # above) -- an unexpected failure partway through is exactly
+            # when a correlatable reply matters most, e.g. so the PWA can
+            # tell a send_keys it's tracking as pending genuinely failed
+            # rather than just never getting an answer.
+            req_id = msg.get("req_id") if isinstance(msg, dict) else None
+            if req_id is not None:
+                err["req_id"] = str(req_id)[:64]
+            self._send(err)
 
 
 # ---------------------------------------------------------------------------
