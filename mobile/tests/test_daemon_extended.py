@@ -900,6 +900,22 @@ class TestWsHandler(AsyncHTTPTestCase):
         conn.close()
 
     @gen_test(timeout=5)
+    async def test_websocket_negotiates_permessage_deflate(self):
+        # Real browsers always offer permessage-deflate; passing
+        # compression_options={} here makes tornado's test client do the
+        # same, simulating that. Without get_compression_options()
+        # overridden server-side, tornado declines the extension outright
+        # regardless of what the client offers -- this proves the server
+        # actually accepts and uses it, not just that the client asked.
+        tok = _add_session('ws_tok_deflate')
+        with patch.object(bm, 'tmux_list_sessions', return_value=[]):
+            conn = await websocket_connect(self._ws_req(token=tok), compression_options={})
+            await conn.read_message()
+        self.assertIsNotNone(conn.protocol._compressor)
+        self.assertIsNotNone(conn.protocol._decompressor)
+        conn.close()
+
+    @gen_test(timeout=5)
     async def test_list_sessions_returns_sessions(self):
         tok = _add_session('ws_tok_ls')
         fake = [{'id': '$0', 'name': 'main', 'attached': True, 'windows': []}]

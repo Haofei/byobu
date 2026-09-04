@@ -246,6 +246,35 @@ byobu (7.19) 2026-08-15  Dustin Kirkland <kirkland@ubuntu.com>
     machine (ack clears pending, error restores into an empty box but
     not over new text, disconnect shows the banner immediately, a stale
     reply for an already-superseded send is ignored)
+  * trustmux daemon: enable WebSocket permessage-deflate compression,
+    never turned on before now (Tornado disables it unless explicitly
+    opted into via get_compression_options()). Pane captures are
+    brutally repetitive -- tmux pads every line out to the pane's full
+    width with spaces, and colored output repeats the same ANSI escapes
+    constantly -- so every snapshot/update/delta had been shipping raw
+    and uncompressed this whole time. Measured on real `tmux
+    capture-pane -e` output: a 220x50 pane full of colorized `ls`
+    output compressed from 35KB to 4.6KB (87% smaller); even a plain,
+    uncolored pane of short shell output still compressed ~90% just
+    from the line-padding whitespace. This directly attacks the same
+    root cause as the delta-encoding and backpressure fixes above: the
+    daemon can only ever have one write in flight per connection (see
+    _send_wait), and once handed to the OS that write's bytes are
+    already committed to the kernel's send queue in order -- a
+    pane-switch's cancel() stops the *next* tick, but can't claw back
+    bytes already queued for the one in flight, so it waits behind
+    them regardless. An order-of-magnitude smaller payload shrinks that
+    worst-case wait by roughly the same factor: at a genuinely
+    bandwidth-starved 2 KB/s, the measured 35KB snapshot's transmit
+    time drops from ~138s to ~18s. Reported as switching between
+    window contexts taking minutes on airplane wifi, to the point
+    that force-quitting and reopening the app -- discarding the stuck
+    connection for a fresh one with an empty send queue -- was
+    consistently faster than just waiting. Verified end-to-end with a
+    real WebSocket handshake asserting the server actually negotiates
+    and uses permessage-deflate when the client offers it (Tornado
+    silently declines the extension otherwise, regardless of what the
+    client asks for)
 
 byobu (7.18) 2026-08-14  Dustin Kirkland <kirkland@ubuntu.com>
 

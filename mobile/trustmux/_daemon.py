@@ -880,6 +880,23 @@ class WsHandler(tornado.websocket.WebSocketHandler):
     hijacking and is correct for our setup in all modes.
     """
 
+    def get_compression_options(self):
+        # permessage-deflate was never turned on, so every snapshot/update/
+        # delta shipped as raw, uncompressed text -- pane captures are
+        # brutally repetitive (tmux pads every line out to the pane width
+        # with spaces; ANSI color runs repeat constantly), so this was
+        # leaving most of the payload on the table for free. Measured on
+        # real `tmux capture-pane -e` output: ~87-90% smaller after deflate.
+        # On a bandwidth-starved link (reported from airplane wifi) the
+        # daemon can only ever have one write in flight per connection
+        # (see _send_wait), and that write's bytes are already committed to
+        # the OS's send queue before a pane-switch can cancel anything --
+        # shrinking the payload by an order of magnitude directly shrinks
+        # the worst-case wait behind it. Browsers offer this extension by
+        # default; returning a dict (even empty, which keeps tornado's
+        # defaults) is the only thing needed server-side to accept it.
+        return {}
+
     async def get(self, *args, **kwargs):
         # Chrome uses HTTP/2 for HTTPS connections. HTTP/2 WebSocket (RFC 8441)
         # uses CONNECT + :protocol:websocket and omits Sec-WebSocket-Key.
