@@ -27,7 +27,9 @@ PKG="byobu"
 [ -z "${BYOBU_PREFIX}" ] && export BYOBU_PREFIX="@prefix@" || export BYOBU_PREFIX
 . "${BYOBU_PREFIX}/lib/${PKG}/include/common"
 
-TEXTDOMAIN="$PKG"
+# TEXTDOMAIN/TEXTDOMAINDIR are exported by include/common now (GH #142) --
+# this used to redundantly (and, missing "export", ineffectively) set
+# TEXTDOMAIN again here.
 
 COLORS="default_light \
 	default_dark \

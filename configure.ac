@@ -6,8 +6,15 @@ AC_INIT([byobu], [7.20], [https://byobu.org])
 AC_CONFIG_SRCDIR([usr/bin/byobu.in])
 AM_INIT_AUTOMAKE([foreign])
 AC_PROG_LN_S
+AC_PROG_MKDIR_P
 
 # Checks for programs.
+# msgfmt compiles po/*.po into installed .mo catalogs (see po/Makefile.am).
+# Not required: byobu runs fine without translations, so a missing msgfmt
+# only skips that install step rather than failing the whole build.
+AC_CHECK_PROGS([MSGFMT], [msgfmt])
+AS_IF([test -z "$MSGFMT"],
+  [AC_MSG_WARN([msgfmt not found -- byobu will build without translation catalogs])])
 
 # Checks for libraries.
 
@@ -77,4 +84,5 @@ AC_OUTPUT(Makefile \
 	usr/lib/byobu/Makefile \
 	usr/lib/byobu/include/Makefile \
 	usr/share/sounds/byobu/Makefile \
-	usr/share/man/man1/Makefile usr/bin/Makefile)
+	usr/share/man/man1/Makefile usr/bin/Makefile \
+	po/Makefile)

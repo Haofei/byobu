@@ -51,6 +51,18 @@ if [ -z "${BYOBU_INCLUDED_LIBS}" ]; then
 	. "${BYOBU_PREFIX}/lib/${PKG}/include/constants"
 	get_distro || true
 	export BYOBU_DISTRO="$_RET"
+
+	# Needed by every gettext call site (usr/lib/byobu/menu,
+	# byobu-select-profile) so translated strings actually get looked up:
+	# TEXTDOMAIN was previously only ever set (and never exported) in
+	# byobu-select-profile.in, so the gettext subprocess never saw it, and
+	# TEXTDOMAINDIR was never set anywhere -- both silently fell back to
+	# gettext's own defaults (domain "messages" in the system locale dir),
+	# which never matches byobu's own catalogs regardless of packaging.
+	# GH #142
+	export TEXTDOMAIN="$PKG"
+	export TEXTDOMAINDIR="$BYOBU_PREFIX/share/locale"
+
 	BYOBU_INCLUDED_LIBS=1
 fi
 

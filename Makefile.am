@@ -21,6 +21,7 @@ SUBDIRS = etc/byobu \
 	usr/share/man/man1 \
 	usr/share/sounds/byobu \
 	usr/bin \
+	po \
 	$(TRUSTMUX_SUBDIR)
 
 # mobile/ is always distributed so `make dist` is complete regardless of
