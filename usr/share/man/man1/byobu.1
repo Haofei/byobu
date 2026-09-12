@@ -168,6 +168,12 @@ Byobu name screen sessions "byobu", if unspecified.  To hide sessions from \fBby
 
  byobu \-S .hidden
 
+In \fBbyobu-tmux\fP(1), running \fBbyobu\fP to attach to an already-running session does not, by default, reattach to that exact session object. Instead it creates a new session in the same tmux \fIsession group\fP as the existing one, sharing the same set of windows and panes while giving each attaching terminal its own independent current-window focus and scrollback view. tmux names each member of the group by appending "\-2", "\-3", and so on to the original session's name, and the "session" status indicator (see STATUS NOTIFICATIONS above) counts every member of the group, not just one \-\- so opening and detaching from byobu repeatedly is expected to grow this count, and switching between group members with the window\-switching keybindings will not show different window content, since the windows are shared. Every session in the group other than the original has tmux's \fBdestroy-unattached\fP option set, so it is automatically destroyed as soon as you switch away from it, which is why the indicator eventually settles back down on its own.
+
+To make \fBbyobu\fP reattach to the exact same session instead of creating a new grouped one on every invocation, create an empty file at \fI$BYOBU_CONFIG_DIR/.reuse-session\fP:
+
+ touch $BYOBU_CONFIG_DIR/.reuse-session
+
 .SH WINDOWS
 
 Each open window in the screen session is displayed in the upper bar toward the far left.  These are numbered, and include indicators as to activity in the window (see "activity" in \fBscreen\fP(1) and \fBtmux\fP(1) for symbol definitions).  The current active window is highlighted by inverting the background/text from the rest of the window bar.
