@@ -169,6 +169,12 @@ status_freq packages;   assert_eq "status_freq packages=211"           "$_RET" "
 status_freq whoami;     assert_eq "status_freq whoami=86029"           "$_RET" "86029"
 status_freq battery;    assert_eq "status_freq battery=61"             "$_RET" "61"
 status_freq unknown_xyz; assert_eq "status_freq unknown=9999991"       "$_RET" "9999991"
+# GH #158: session count is dynamic (sessions open/close at runtime) and
+# cheap to check -- it must not share the ~115-day "effectively static"
+# TTL used for arch/distro/logo/etc., or a stale multi-session indicator
+# persists long after closing back down to one session.
+status_freq session;    assert_eq "status_freq session is short-lived, not the ~115-day static TTL" \
+	"$([ "$_RET" -lt 60 ] && echo short || echo long)" "short"
 
 # ---------------------------------------------------------------------------
 # Section 7 — color_tmux: tmux-format colour escape sequences
